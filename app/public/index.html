@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow — CI/CD Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>TaskFlow</h1>
+      <p class="subtitle">Multi-stage CI/CD demo app</p>
+    </header>
+    <form id="task-form">
+      <input id="task-input" type="text" placeholder="Add a new task..." autocomplete="off" />
+      <button type="submit">Add</button>
+    </form>
+    <ul id="task-list"></ul>
+    <footer>
+      <span id="env-badge">env: loading...</span>
+      <span id="version-badge">v: loading...</span>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

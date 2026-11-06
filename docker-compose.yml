@@ -1,0 +1,18 @@
+# docker-compose.yml: Runs the app container on each EC2 host. Image tag comes from ECR via env var.
+version: "3.8"
+services:
+  app:
+    image: ${IMAGE_URI}
+    container_name: task-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - APP_ENV=${APP_ENV}
+      - APP_VERSION=${APP_VERSION}
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ${AWS_REGION}
+        awslogs-group: ${LOG_GROUP}
+        awslogs-stream: app

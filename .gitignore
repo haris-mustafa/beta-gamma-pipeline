@@ -1,0 +1,10 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfplan
+crash.log
+
+# Keep provider lock file
+!.terraform.lock.hcl

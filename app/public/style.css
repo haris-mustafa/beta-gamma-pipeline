@@ -1,0 +1,87 @@
+/* style.css: Colorful, modern UI for the demo task app. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.container {
+  width: 100%;
+  max-width: 520px;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  padding: 32px;
+}
+header h1 {
+  font-size: 2rem;
+  background: linear-gradient(90deg, #667eea, #f093fb);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: 4px;
+}
+.subtitle { color: #888; font-size: 0.9rem; margin-bottom: 20px; }
+form { display: flex; gap: 10px; margin-bottom: 20px; }
+#task-input {
+  flex: 1;
+  padding: 12px 16px;
+  border: 2px solid #e0e0e0;
+  border-radius: 10px;
+  font-size: 1rem;
+  transition: border-color 0.2s;
+}
+#task-input:focus { outline: none; border-color: #667eea; }
+button {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+button:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(102,126,234,0.4); }
+#task-list { list-style: none; }
+#task-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: #f7f8fc;
+  border-radius: 10px;
+  border-left: 4px solid #667eea;
+  transition: background 0.2s;
+}
+#task-list li:hover { background: #eef0fa; }
+#task-list li.done { border-left-color: #2ecc71; opacity: 0.65; }
+#task-list li.done .title { text-decoration: line-through; }
+.title { flex: 1; font-size: 1rem; }
+.actions { display: flex; gap: 6px; }
+.actions button {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  background: #eef0fa;
+  color: #444;
+}
+.actions button.delete { background: #ffe5e5; color: #e74c3c; }
+footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+  font-size: 0.8rem;
+  color: #999;
+}
+#env-badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  font-weight: 600;
+}

@@ -1,4 +1,5 @@
-# deploy.yml: Full multi-stage pipeline — test, build once, push ECR, deploy beta → gamma → manual approval → prod, with auto-rollback + SNS notifications.
+
+# deploy.yml: Multi-stage CI/CD pipeline
 
 name: Multi-Stage Deploy
 
@@ -22,73 +23,97 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
       - run: cd app && npm install --omit=dev && npm test
 
-  # ---------- 2. Build & push (ONCE) ----------
+  # ---------- 2. Build & Push (ONCE) ----------
   build:
     needs: test
     runs-on: ubuntu-latest
+
     outputs:
       image_uri: ${{ steps.build.outputs.image_uri }}
       image_tag: ${{ steps.meta.outputs.tag }}
+
     steps:
       - uses: actions/checkout@v4
+
       - id: meta
         run: echo "tag=${GITHUB_SHA::12}" >> $GITHUB_OUTPUT
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
       - id: login
         run: |
           ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-          echo "registry=${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> $GITHUB_OUTPUT
-          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
+
+          REGISTRY="${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          echo "registry=${REGISTRY}" >> $GITHUB_OUTPUT
+
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$REGISTRY"
+
       - id: build
         run: |
-          IMAGE="${ECR_REPO}:${{ steps.meta.outputs.tag }}"
-          docker build -t $IMAGE .
-          docker push $IMAGE
-          echo "image_uri=${IMAGE}" >> $GITHUB_OUTPUT
+          IMAGE="${{ steps.login.outputs.registry }}/${ECR_REPO}:${{ steps.meta.outputs.tag }}"
 
-  # ---------- 3. Deploy to an environment (reusable) ----------
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+          echo "image_uri=$IMAGE" >> $GITHUB_OUTPUT
+
+  # ---------- 3. Deploy to Beta ----------
   deploy-beta:
     needs: build
     uses: ./.github/workflows/_deploy-env.yml
+
     with:
       env_name: beta
       instance_id: ${{ vars.BETA_INSTANCE_ID }}
       image_uri: ${{ needs.build.outputs.image_uri }}
       image_tag: ${{ needs.build.outputs.image_tag }}
+
     secrets: inherit
 
+  # ---------- 4. Deploy to Gamma ----------
   deploy-gamma:
     needs: [build, deploy-beta]
     uses: ./.github/workflows/_deploy-env.yml
+
     with:
       env_name: gamma
       instance_id: ${{ vars.GAMMA_INSTANCE_ID }}
       image_uri: ${{ needs.build.outputs.image_uri }}
       image_tag: ${{ needs.build.outputs.image_tag }}
+
     secrets: inherit
 
-  # ---------- 4. Manual approval ----------
+  # ---------- 5. Manual Production Approval ----------
   approve-prod:
     needs: deploy-gamma
     runs-on: ubuntu-latest
     environment: production
+
     steps:
       - run: echo "Approved for production"
 
+  # ---------- 6. Deploy to Production ----------
   deploy-prod:
     needs: [build, approve-prod]
     uses: ./.github/workflows/_deploy-env.yml
+
     with:
       env_name: prod
       instance_id: ${{ vars.PROD_INSTANCE_ID }}
       image_uri: ${{ needs.build.outputs.image_uri }}
       image_tag: ${{ needs.build.outputs.image_tag }}
+
     secrets: inherit

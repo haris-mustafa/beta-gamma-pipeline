@@ -1,10 +1,12 @@
-# iam.tf: EC2 instance role so the instance can pull from ECR, be managed by SSM, write CloudWatch logs, and publish SNS notifications.
+
+# iam.tf: EC2 instance role + GitHub Actions ECR push permissions.
 
 data "aws_caller_identity" "current" {}
 
 # --- EC2 instance role ---
 resource "aws_iam_role" "ec2" {
   name = "${var.project_name}-ec2-role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -28,6 +30,7 @@ resource "aws_iam_role_policy_attachment" "ec2_ecr_read" {
 resource "aws_iam_role_policy" "ec2_extra" {
   name = "${var.project_name}-ec2-extra"
   role = aws_iam_role.ec2.id
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -52,4 +55,39 @@ resource "aws_iam_role_policy" "ec2_extra" {
 resource "aws_iam_instance_profile" "ec2" {
   name = "${var.project_name}-ec2-profile"
   role = aws_iam_role.ec2.name
+}
+
+# --- GitHub Actions deploy role: ECR push permissions ---
+
+resource "aws_iam_role_policy" "github_ecr_push" {
+  name = "${var.project_name}-github-ecr-push"
+  role = aws_iam_role.github_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:PutImage"
+        ]
+        Resource = [
+          aws_ecr_repository.app.arn
+        ]
+      }
+    ]
+  })
 }

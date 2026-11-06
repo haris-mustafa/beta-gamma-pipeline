@@ -11,3 +11,11 @@ output "ec2_instance_ids" {
     env => instance.id
   }
 }
+
+output "github_deploy_role_arn" {
+  value = aws_iam_role.github_deploy.arn
+}
+
+output "sns_topic_arn" {
+  value = aws_sns_topic.deploy.arn
+}

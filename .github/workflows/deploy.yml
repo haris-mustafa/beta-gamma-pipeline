@@ -1,17 +1,11 @@
-# _deploy-env.yml: Reusable workflow that deploys one image to one EC2 via SSM, runs health checks, auto-rolls back on failure, and notifies SNS.
+# deploy.yml: Full multi-stage pipeline — test, build once, push ECR, deploy beta → gamma → manual approval → prod, with auto-rollback + SNS notifications.
 
-name: Deploy Environment
+name: Multi-Stage Deploy
 
 on:
-  workflow_call:
-    inputs:
-      env_name: { required: true, type: string }
-      instance_id: { required: true, type: string }
-      image_uri: { required: true, type: string }
-      image_tag: { required: true, type: string }
-    secrets:
-      AWS_DEPLOY_ROLE_ARN: { required: true }
-      SNS_TOPIC_ARN: { required: true }
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -19,67 +13,82 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
+  ECR_REPO: cicd-pipeline/app
   APP_NAME: task-app
-  LOG_GROUP: /cicd-pipeline/${{ inputs.env_name }}/app
 
 jobs:
-  deploy:
+  # ---------- 1. Test ----------
+  test:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: cd app && npm install --omit=dev && npm test
+
+  # ---------- 2. Build & push (ONCE) ----------
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.build.outputs.image_uri }}
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> $GITHUB_OUTPUT
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Get current (previous) image
-        id: prev
+      - id: login
         run: |
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "${{ inputs.instance_id }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["cat /opt/app/.current_image 2>/dev/null || echo none"]' \
-            --query "Command.CommandId" --output text)
-          sleep 8
-          PREV=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
-            --instance-id "${{ inputs.instance_id }}" \
-            --query "StandardOutputContent" --output text | tr -d '\n' | xargs)
-          echo "previous=${PREV:-none}" >> $GITHUB_OUTPUT
-          echo "Previous image: ${PREV:-none}"
-
-      - name: Deploy new image
-        id: deploy
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          echo "registry=${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> $GITHUB_OUTPUT
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com
+      - id: build
         run: |
-          cat > /tmp/deploy.sh <<'SH'
-          #!/bin/bash
-          set -e
-          IMAGE_URI="$1"; ENV_NAME="$2"; VERSION="$3"; LOG_GROUP="$4"
-          cd /opt/app
-          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${IMAGE_URI%%/*}
-          export IMAGE_URI ENV_NAME VERSION LOG_GROUP AWS_REGION=us-east-1
-          cat > docker-compose.yml <<'YML'
-          version: "3.8"
-          services:
-            app:
-              image: ${IMAGE_URI}
-              container_name: task-app
-              restart: unless-stopped
-              ports: ["3000:3000"]
-              environment:
-                - APP_ENV=${ENV_NAME}
-                - APP_VERSION=${VERSION}
-              logging:
-                driver: awslogs
-                options:
-                  awslogs-region: ${AWS_REGION}
-                  awslogs-group: ${LOG_GROUP}
-                  awslogs-stream: app
-          YML
-          docker compose down || true
-          docker compose up -d
-          echo "$IMAGE_URI" > .current_image
-          SH
-          chmod +x /tmp/deploy.sh
-          # Upload script via base64 in SSM (simplest for demo)
-          B64=$(base64 -w0 /tmp/deploy.sh)
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "${{
+          IMAGE="${ECR_REPO}:${{ steps.meta.outputs.tag }}"
+          docker build -t $IMAGE .
+          docker push $IMAGE
+          echo "image_uri=${IMAGE}" >> $GITHUB_OUTPUT
+
+  # ---------- 3. Deploy to an environment (reusable) ----------
+  deploy-beta:
+    needs: build
+    uses: ./.github/workflows/_deploy-env.yml
+    with:
+      env_name: beta
+      instance_id: ${{ vars.BETA_INSTANCE_ID }}
+      image_uri: ${{ needs.build.outputs.image_uri }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+    secrets: inherit
+
+  deploy-gamma:
+    needs: [build, deploy-beta]
+    uses: ./.github/workflows/_deploy-env.yml
+    with:
+      env_name: gamma
+      instance_id: ${{ vars.GAMMA_INSTANCE_ID }}
+      image_uri: ${{ needs.build.outputs.image_uri }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+    secrets: inherit
+
+  # ---------- 4. Manual approval ----------
+  approve-prod:
+    needs: deploy-gamma
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Approved for production"
+
+  deploy-prod:
+    needs: [build, approve-prod]
+    uses: ./.github/workflows/_deploy-env.yml
+    with:
+      env_name: prod
+      instance_id: ${{ vars.PROD_INSTANCE_ID }}
+      image_uri: ${{ needs.build.outputs.image_uri }}
+      image_tag: ${{ needs.build.outputs.image_tag }}
+    secrets: inherit

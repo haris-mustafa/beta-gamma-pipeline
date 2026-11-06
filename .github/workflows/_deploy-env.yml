@@ -82,4 +82,60 @@ jobs:
           # Upload script via base64 in SSM (simplest for demo)
           B64=$(base64 -w0 /tmp/deploy.sh)
           CMD_ID=$(aws ssm send-command \
-            --instance-ids "${{
+            --instance-ids "${{ inputs.instance_id }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[\"echo $B64 | base64 -d > /tmp/deploy.sh\",\"chmod +x /tmp/deploy.sh\",\"/tmp/deploy.sh ${{ inputs.image_uri }} ${{ inputs.env_name }} ${{ inputs.image_tag }} $LOG_GROUP\"]" \
+            --query "Command.CommandId" --output text)
+          echo "cmd_id=$CMD_ID" >> $GITHUB_OUTPUT
+          # Poll
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation --command-id "$CMD_ID" \
+              --instance-id "${{ inputs.instance_id }}" \
+              --query "Status" --output text)
+            [ "$STATUS" = "Success" ] && exit 0
+            [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] && exit 1
+            sleep 5
+          done
+          exit 1
+
+      - name: Health check
+        id: health
+        run: |
+          IP=$(aws ec2 describe-instances --instance-ids "${{ inputs.instance_id }}" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          for i in {1..10}; do
+            if curl -sf "http://$IP:3000/health" | tee /tmp/health.json; then
+              ENV=$(jq -r .env /tmp/health.json)
+              [ "$ENV" = "${{ inputs.env_name }}" ] && echo "health ok" && exit 0
+            fi
+            sleep 6
+          done
+          exit 1
+
+      - name: Rollback on failure
+        if: failure() && steps.prev.outputs.previous != 'none'
+        run: |
+          echo "Rolling back to ${{ steps.prev.outputs.previous }}"
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ inputs.instance_id }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[\"cd /opt/app && export IMAGE_URI=${{ steps.prev.outputs.previous }} ENV_NAME=${{ inputs.env_name }} VERSION=rollback LOG_GROUP=$LOG_GROUP AWS_REGION=us-east-1 && docker compose down && docker compose up -d && echo ${{ steps.prev.outputs.previous }} > .current_image\"]" \
+            --query "Command.CommandId" --output text)
+          sleep 15
+          IP=$(aws ec2 describe-instances --instance-ids "${{ inputs.instance_id }}" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          curl -sf "http://$IP:3000/health" && echo "rollback verified"
+
+      - name: SNS success (prod only)
+        if: success() && inputs.env_name == 'prod'
+        run: |
+          aws sns publish --topic-arn "${{ secrets.SNS_TOPIC_ARN }}" \
+            --subject "Production deploy success" \
+            --message "Image ${{ inputs.image_uri }} deployed to prod successfully."
+
+      - name: SNS rollback success
+        if: failure() && steps.prev.outputs.previous != 'none'
+        run: |
+          aws sns publish --topic-arn "${{ secrets.SNS_TOPIC_ARN }}" \
+            --subject "Deployment failed — rollback OK (${{ inputs.env_name }})" \
+            --message "Deploy to ${{ inputs.env_name }} failed. Rolled back to ${{ steps.prev.outputs.previous }}."
